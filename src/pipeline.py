@@ -24,17 +24,18 @@ COLS_SALDO = ["RIESGOS_ASEG_VIG", "SUMA_ASEG"]
 
 
 def cargar_crudo(ruta=RUTA_CRUDA):
-    """Lee el archivo original tal cual. No transforma nada."""
-    # TODO: pd.read_excel(ruta)
-    ...
+    """Lee el archivo original, no transforma nada."""
+    return pd.read_excel(ruta)
+
 
 
 def normalizar_tipos(df):
     """Convierte FECHA_CORTE a datetime y agrega columnas ANIO y MES."""
-    # TODO: pd.to_datetime en FECHA_CORTE
-    # TODO: df["ANIO"] = df["FECHA_CORTE"].dt.year
-    # TODO: df["MES"]  = df["FECHA_CORTE"].dt.month
-    ...
+    df["FECHA_CORTE"]=pd.to_datetime(df["FECHA_CORTE"])
+    df["ANIO"] = df["FECHA_CORTE"].dt.year
+    df["MES"]  = df["FECHA_CORTE"].dt.month
+    return df
+
 
 
 def normalizar_texto(df):
@@ -45,8 +46,10 @@ def normalizar_texto(df):
     largo de los años (fusiones, cambios de razón social). Si las hay, aquí
     es donde se mapean a un nombre canónico.
     """
-    # TODO: .str.strip() en las columnas de LLAVES
-    ...
+    df["NOMBRE_CORTO"]=df["NOMBRE_CORTO"].str.strip()
+    df["DESC_RAMO"]=df["DESC_RAMO"].str.strip()
+    df["DESC_ENTIDADFEDERATIVA"]=df["DESC_ENTIDADFEDERATIVA"].str.strip()
+    return df
 
 
 def desacumular(df):
@@ -67,6 +70,5 @@ def desacumular(df):
 
 def guardar(df, ruta=RUTA_LIMPIA):
     """Guarda el resultado en Parquet (conserva tipos y pesa mucho menos)."""
-    # TODO: ruta.parent.mkdir(parents=True, exist_ok=True)
-    # TODO: df.to_parquet(ruta, index=False)
-    ...
+    ruta.parent.mkdir(parents=True, exist_ok=True)
+    df.to_parquet(ruta, index=False)
