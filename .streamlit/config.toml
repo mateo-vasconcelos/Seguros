@@ -1,0 +1,31 @@
+# Tema tomado de reporteregulatorio.mx: Nunito con títulos en peso ligero,
+# naranja como color de acción y azul marino para las superficies oscuras.
+
+[theme]
+base = "light"
+primaryColor = "#ff5d22"          # naranja de marca: botones, pestaña activa
+backgroundColor = "#ffffff"
+secondaryBackgroundColor = "#f1f8fb"   # azul muy claro de las secciones
+textColor = "#212529"
+borderColor = "#e4ecf1"
+linkColor = "#ff5d22"
+linkUnderline = false
+
+font = "Nunito, sans-serif"
+headingFont = "Nunito, sans-serif"
+# El sitio usa encabezados finos (peso 300), no negritas. Es la mitad de su
+# carácter: sin esto la tipografía se parece pero el tono no.
+headingFontWeights = [300, 300, 400, 600, 600, 600]
+baseFontSize = 16
+baseRadius = "0.3rem"             # las 5px del sitio
+buttonRadius = "0.3rem"
+metricValueFontWeight = 300
+metricValueFontSize = "1.7rem"
+
+[theme.sidebar]
+backgroundColor = "#221638"       # el marino del hero
+secondaryBackgroundColor = "#2e1f49"
+textColor = "#f1f8fb"
+borderColor = "#3a2a5c"
+primaryColor = "#ff5d22"
+linkColor = "#ff8a5c"

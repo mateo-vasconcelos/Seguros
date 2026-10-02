@@ -31,6 +31,7 @@ def cargar_crudo(ruta=RUTA_CRUDA):
 
 def normalizar_tipos(df):
     """Convierte FECHA_CORTE a datetime y agrega columnas ANIO y MES."""
+    df = df.copy()
     df["FECHA_CORTE"]=pd.to_datetime(df["FECHA_CORTE"])
     df["ANIO"] = df["FECHA_CORTE"].dt.year
     df["MES"]  = df["FECHA_CORTE"].dt.month
@@ -46,6 +47,7 @@ def normalizar_texto(df):
     largo de los años (fusiones, cambios de razón social). Si las hay, aquí
     es donde se mapean a un nombre canónico.
     """
+    df = df.copy()
     df["NOMBRE_CORTO"]=df["NOMBRE_CORTO"].str.strip()
     df["DESC_RAMO"]=df["DESC_RAMO"].str.strip()
     df["DESC_ENTIDADFEDERATIVA"]=df["DESC_ENTIDADFEDERATIVA"].str.strip()
@@ -61,11 +63,54 @@ def desacumular(df):
     y enero se queda igual, porque ahí el acumulado se reinicia.
 
     Solo aplica a COLS_FLUJO. Las COLS_SALDO se dejan intactas.
+
+    No necesita df.copy(): sort_values ya devuelve un objeto nuevo.
     """
-    # TODO: ordenar por LLAVES + FECHA_CORTE
-    # TODO: agrupar por LLAVES + ANIO y usar .diff() sobre COLS_FLUJO
-    # TODO: rellenar el primer mes de cada grupo con su valor original
-    ...
+    df = df.sort_values(LLAVES + ["FECHA_CORTE"])
+    df[COLS_FLUJO] = df.groupby(LLAVES + ["ANIO"])[COLS_FLUJO].diff().fillna(df[COLS_FLUJO])
+    df = df[df.ANIO > 2021]
+    return df
+
+
+
+def validar(crudo, limpio):
+    """
+    Comprueba que el desacumulado sea correcto, comparando contra el crudo.
+
+    La prueba de fondo es exacta, no aproximada: si el flujo mensual esta bien
+    calculado, volver a acumularlo dentro de cada (LLAVES, ANIO) tiene que
+    reproducir la columna original peso por peso.
+
+    `crudo` es el df ANTES de desacumular (ya con ANIO/MES) y `limpio` el de
+    despues. Devuelve un DataFrame con una fila por prueba; revisa que la
+    columna `ok` sea True en todas.
+    """
+    pruebas = []
+
+    # 1. reacumular debe devolver el valor original.
+    #    El .loc empareja por indice, no por posicion: desacumular reordena y
+    #    filtra filas, asi que comparar por posicion daria resultados falsos.
+    recalc = limpio.groupby(LLAVES + ["ANIO"])[COLS_FLUJO].cumsum()
+    original = crudo.loc[recalc.index, COLS_FLUJO]
+    for c in COLS_FLUJO:
+        desv = (recalc[c] - original[c]).abs().max()
+        pruebas.append((f"cumsum reproduce {c}", desv == 0, f"desviacion max = {desv:,.0f}"))
+
+    # 2. las columnas de saldo son fotos a la fecha de corte: nadie las toca
+    for c in COLS_SALDO:
+        igual = limpio[c].equals(crudo.loc[limpio.index, c])
+        pruebas.append((f"{c} sin modificar", igual, "intacta" if igual else "FUE MODIFICADA"))
+
+    # 3. el filtro de anio no debe perder ni agregar filas de mas
+    esperado = int((crudo["ANIO"] > 2021).sum())
+    pruebas.append(("filas tras filtrar 2021", len(limpio) == esperado,
+                    f"{len(limpio):,} filas (esperadas {esperado:,})"))
+
+    # 4. desacumular no debe dejar huecos donde antes habia numeros
+    nulos = int(limpio[COLS_FLUJO].isna().sum().sum())
+    pruebas.append(("sin nulos en COLS_FLUJO", nulos == 0, f"{nulos:,} nulos"))
+
+    return pd.DataFrame(pruebas, columns=["prueba", "ok", "detalle"])
 
 
 def guardar(df, ruta=RUTA_LIMPIA):
