@@ -81,7 +81,7 @@ table.resumen th.tema { text-align: left; width: 14rem; vertical-align: top;
 table.resumen th.tema .signo { display: block; font-weight: 400; font-size: .76rem;
     letter-spacing: 0; margin-top: .1rem; }
 table.resumen td { vertical-align: top; padding: .7rem .8rem; font-size: .93rem;
-    line-height: 1.5; border-bottom: 1px solid #f0f4f7; }
+    line-height: 1.5; border-bottom: 1px solid #cfdce6; }
 table.resumen tr:hover td { background: #f8fbfd; }
 table.resumen .vacio { color: #a9a9b8; }
 

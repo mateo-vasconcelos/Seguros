@@ -822,9 +822,9 @@ def carrera_contra_mercado(comparacion, titulo="", volumen_min=50, ax=None):
     # Con dos series la leyenda es obligatoria: el color no puede ser la única
     # forma de saber cuál punto es quién.
     ax.scatter([], [], s=110, color=SERIE, edgecolor=SUPERFICIE,
-               linewidth=1.8, label="la institución")
+               linewidth=1.8, label="Institución")
     ax.scatter([], [], s=70, marker="D", color=SUPERFICIE, edgecolor=MUTED,
-               linewidth=1.8, label="su mercado")
+               linewidth=1.8, label="Mercado")
     leyenda = ax.legend(loc="lower right", frameon=True, fontsize=8.5,
                         framealpha=1, edgecolor=RETICULA, borderpad=0.7)
     leyenda.get_frame().set_facecolor(SUPERFICIE)
