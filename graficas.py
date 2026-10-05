@@ -136,8 +136,11 @@ def _colocar_etiquetas(ax, puntos, textos, fontsize=8.5, reservado=(), radios=No
     de mediana y la retícula no las crucen.
     """
     fig = ax.figure
+    # draw() deja la figura con un renderer utilizable; a partir de ahí
+    # get_window_extent() sin argumento funciona en cualquier backend.
+    # Pedirlo con fig.canvas.get_renderer() rompía en producción: ese método
+    # solo existe en el canvas de Agg, y la nube resuelve otro backend.
     fig.canvas.draw()
-    render = fig.canvas.get_renderer()
 
     # Los propios puntos ocupan lugar: una etiqueta no debe caer encima de uno.
     if radios is None:
@@ -179,7 +182,7 @@ def _colocar_etiquetas(ax, puntos, textos, fontsize=8.5, reservado=(), radios=No
                     bbox=dict(fc=SUPERFICIE, ec="none", pad=1.2),
                 )
                 fig.canvas.draw()
-                bb = etiqueta.get_window_extent(render)
+                bb = etiqueta.get_window_extent()
                 caja = (bb.x0 - 2, bb.y0 - 2, bb.x1 + 2, bb.y1 + 2)
                 if choca(caja):
                     etiqueta.remove()
@@ -312,7 +315,7 @@ def dispersion_cartera(perfiles, titulo="", ax=None, etiquetar=6):
         for t in leyenda.get_texts():
             t.set_color(SECUNDARIA)
         fig.canvas.draw()
-        bb = leyenda.get_window_extent(fig.canvas.get_renderer())
+        bb = leyenda.get_window_extent()
         reservado = [(bb.x0 - 4, bb.y0 - 4, bb.x1 + 4, bb.y1 + 4)]
 
     # Una sola llamada con todo: si se llamara por serie, las etiquetas de la
@@ -419,7 +422,7 @@ def dispersion(datos, x, y, etiqueta=None, titulo="", nota=None,
                            color=SECUNDARIA, zorder=5,
                            bbox=dict(fc=SUPERFICIE, ec=RETICULA, pad=4))
     fig.canvas.draw()
-    bb = caja_rho.get_window_extent(fig.canvas.get_renderer())
+    bb = caja_rho.get_window_extent()
 
     if etiqueta:
         sub = datos.loc[_puntos_notables(datos, x, y, etiquetar)]
@@ -653,7 +656,7 @@ def mapa_frecuencia_severidad(diagnostico, titulo="", tolerancia=0.15, ax=None):
     # ejes: para un texto largo en diagonal esa caja es muchísimo más grande
     # que la tinta y bloquearía media gráfica al colocar las etiquetas. Se
     # reserva encogida hacia el centro, que aproxima la franja que ocupa.
-    bb = rotulo.get_window_extent(fig.canvas.get_renderer())
+    bb = rotulo.get_window_extent()
     cx, cy = (bb.x0 + bb.x1) / 2, (bb.y0 + bb.y1) / 2
     ancho, alto = bb.width * 0.25, bb.height * 0.25
     bb_rotulo = (cx - ancho, cy - alto, cx + ancho, cy + alto)

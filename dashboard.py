@@ -70,6 +70,21 @@ ESTILO = """
     min-width: 170px;
 }
 
+/* Resumen comparativo: una fila por categoría, una columna por aseguradora,
+   para que los mismos titulares queden enfrentados. */
+table.resumen { width: 100%; border-collapse: collapse; }
+table.resumen th.aseg { text-align: left; padding: .5rem .8rem; font-weight: 600;
+    font-size: .95rem; color: #221638; border-bottom: 2px solid #e4ecf1; }
+table.resumen th.tema { text-align: left; width: 14rem; vertical-align: top;
+    padding: .7rem .8rem; font-weight: 600; font-size: .82rem; letter-spacing: .03em;
+    border-left: 3px solid #6b6b84; }
+table.resumen th.tema .signo { display: block; font-weight: 400; font-size: .76rem;
+    letter-spacing: 0; margin-top: .1rem; }
+table.resumen td { vertical-align: top; padding: .7rem .8rem; font-size: .93rem;
+    line-height: 1.5; border-bottom: 1px solid #f0f4f7; }
+table.resumen tr:hover td { background: #f8fbfd; }
+table.resumen .vacio { color: #a9a9b8; }
+
 /* Recuadro de ayuda al pie de una pestaña. */
 .clave { background: #f1f8fb; border: 1px solid #e4ecf1; border-left: 3px solid #ff5d22;
          border-radius: .3rem; padding: 1rem 1.3rem; margin-top: 1.2rem; }
@@ -341,32 +356,56 @@ tabs = st.tabs(["Resumen", "Participación", "Siniestralidad",
                 "Frecuencia y severidad", "Crecimiento"])
 
 # --- Resumen --------------------------------------------------------------
+# Orden fijo de las filas: así la tabla se lee igual para cualquier
+# aseguradora, y una categoría ausente se nota porque deja un hueco.
+ORDEN_TEMAS = ["cartera", "participación", "crecimiento", "siniestralidad", "diagnóstico"]
+ORDEN_SIGNOS = ["informativo", "favorable", "desfavorable"]
+COLOR_SIGNO = {"favorable": "#0ca30c", "desfavorable": "#d03b3b", "informativo": "#6b6b84"}
+TEXTO_SIGNO = {"favorable": "favorable", "desfavorable": "a revisar", "informativo": ""}
+
 with tabs[0]:
-    st.caption("Top 3 de cada métrica, en los dos sentidos. Si una sección "
-               "favorable no aparece, es que ningún ramo destaca lo suficiente.")
-    for col, nombre in zip(paneles(aseguradoras, disposicion), aseguradoras):
-        with col:
-            with warnings.catch_warnings():
-                warnings.simplefilter("ignore")   # el aviso del año parcial ya se dio arriba
-                titulares = resumen(df, nombre, anio=anio, n=3)
-            for (tema, signo), grupo in titulares.groupby(["tema", "signo"], sort=False):
-                # El signo va en palabra además de color: un filete de color no
-                # se lee si el lector no distingue rojo de verde.
-                color = {"favorable": "#0ca30c", "desfavorable": "#d03b3b"}.get(signo, "#6b6b84")
-                etiqueta = {"favorable": "favorable", "desfavorable": "a revisar"}.get(signo, "")
-                st.markdown(
-                    f"<div class='rotulo' style='border-color:{color}'>{tema.upper()}"
-                    f"<span style='color:{color};font-weight:400;font-size:.82rem'>"
-                    f"  {etiqueta}</span></div>", unsafe_allow_html=True)
-                for linea in grupo["detalle"]:
-                    st.markdown(f"<div style='margin:0 0 4px 18px'>· {linea}</div>",
-                                unsafe_allow_html=True)
-            faltan = {"siniestralidad", "participación", "crecimiento"} - set(
-                titulares.query("signo == 'favorable'")["tema"])
-            if faltan:
-                st.caption(f"Sin titulares favorables de: {', '.join(sorted(faltan))}")
-            st.download_button("Descargar CSV", titulares.to_csv(index=False),
-                               f"resumen_{nombre}_{anio}.csv", key=f"csv_{nombre}")
+    st.caption("Top 3 de cada métrica, en los dos sentidos. Una celda vacía "
+               "significa que esa aseguradora no tiene nada que destacar ahí.")
+
+    titulares = {}
+    for nombre in aseguradoras:
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore")   # el aviso del año parcial ya se dio arriba
+            titulares[nombre] = resumen(df, nombre, anio=anio, n=3)
+
+    # Las filas son la unión de lo que produjo cada aseguradora: si una tiene
+    # "siniestralidad favorable" y la otra no, la fila existe igual y la
+    # segunda queda en blanco, que es justo la comparación que interesa.
+    presentes = {(f.tema, f.signo) for t in titulares.values() for f in t.itertuples()}
+    filas = [(tema, signo) for tema in ORDEN_TEMAS for signo in ORDEN_SIGNOS
+             if (tema, signo) in presentes]
+
+    html = ["<table class='resumen'><thead><tr><th class='aseg'></th>"]
+    html += [f"<th class='aseg'>{n}</th>" for n in aseguradoras]
+    html.append("</tr></thead><tbody>")
+    for tema, signo in filas:
+        color = COLOR_SIGNO.get(signo, "#6b6b84")
+        etiqueta = TEXTO_SIGNO.get(signo, "")
+        html.append(f"<tr><th class='tema' style='border-left-color:{color}'>"
+                    f"{tema.upper()}"
+                    + (f"<span class='signo' style='color:{color}'>{etiqueta}</span>"
+                       if etiqueta else "")
+                    + "</th>")
+        for nombre in aseguradoras:
+            t = titulares[nombre]
+            lineas = t[(t.tema == tema) & (t.signo == signo)]["detalle"].tolist()
+            celda = ("".join(f"<div>· {l}</div>" for l in lineas) if lineas
+                     else "<span class='vacio'>—</span>")
+            html.append(f"<td>{celda}</td>")
+        html.append("</tr>")
+    html.append("</tbody></table>")
+    st.markdown("".join(html), unsafe_allow_html=True)
+
+    st.markdown("")
+    for col, nombre in zip(st.columns(len(aseguradoras)), aseguradoras):
+        col.download_button(f"Descargar CSV · {nombre}",
+                            titulares[nombre].to_csv(index=False),
+                            f"resumen_{nombre}_{anio}.csv", key=f"csv_{nombre}")
 
 # --- Participación --------------------------------------------------------
 with tabs[1]:
