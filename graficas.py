@@ -9,10 +9,17 @@ de una escala validada para daltonismo; el texto siempre va en tinta, nunca
 en el color de la serie.
 """
 
+import json
 import math
+import unicodedata
 import warnings
+from functools import lru_cache
+from pathlib import Path
 
 import matplotlib.pyplot as plt
+import pandas as pd
+from matplotlib.colors import LinearSegmentedColormap, Normalize
+from matplotlib.patches import Polygon as PoligonoMpl
 from matplotlib.ticker import FixedLocator, FuncFormatter
 
 # --- paleta -----------------------------------------------------------------
@@ -49,6 +56,15 @@ BUENO = "#0ca30c"
 # saturado), no por tono: así siguen siendo distinguibles con cualquier tipo de
 # daltonismo. Aun así nunca van solos — hay leyenda y etiquetas directas.
 SERIES = ["#221638", "#ff5d22"]
+
+# Rampa secuencial de un solo tono para los mapas: la siniestralidad es una
+# magnitud, no una categoría ni una polaridad, así que va de claro a oscuro
+# sobre el marino de marca. Nunca un arcoíris.
+RAMPA = LinearSegmentedColormap.from_list(
+    "marino", ["#eaf0f6", "#9aa0ba", "#4a3f6b", "#221638"])
+SIN_DATO = "#eceae4"     # estado que no alcanza el volumen mínimo
+
+RUTA_GEO = Path(__file__).resolve().parent / "data" / "geo" / "mexico_estados.geojson"
 
 MESES_CORTOS = ["ene", "feb", "mar", "abr", "may", "jun",
                 "jul", "ago", "sep", "oct", "nov", "dic"]
@@ -866,3 +882,127 @@ def carrera_contra_mercado(comparacion, titulo="", volumen_min=50, ax=None):
     ax.tick_params(axis="y", length=0, colors=SECUNDARIA)
     fig.tight_layout()
     return ax
+
+
+def _sin_acentos(texto):
+    """Clave de comparación: los nombres de estado difieren en acentos."""
+    limpio = unicodedata.normalize("NFKD", str(texto)).encode("ascii", "ignore").decode()
+    return " ".join(limpio.lower().split())
+
+
+@lru_cache(maxsize=1)
+def _geometrias():
+    """
+    Contornos de los 32 estados, indexados por nombre sin acentos.
+
+    Se lee una sola vez: el archivo son 180 KB y el dashboard redibuja en cada
+    interacción. Cada estado queda como una lista de anillos exteriores; los
+    interiores (huecos) se ignoran porque ningún estado mexicano tiene.
+    """
+    datos = json.loads(RUTA_GEO.read_text())
+    contornos = {}
+    for rasgo in datos["features"]:
+        geom = rasgo["geometry"]
+        partes = (geom["coordinates"] if geom["type"] == "MultiPolygon"
+                  else [geom["coordinates"]])
+        contornos[_sin_acentos(rasgo["properties"]["name"])] = [p[0] for p in partes]
+    return contornos
+
+
+def mapa_siniestralidad(tabla, titulo="", ax=None, vmin=0, vmax=100):
+    """
+    Mapa de México con la siniestralidad de un ramo, estado por estado.
+
+    `tabla` es la salida de metricas.siniestralidad_estatal().
+
+    El tono va de claro a oscuro con la siniestralidad: es una magnitud, y un
+    solo tono es lo que se lee sin leyenda. Los estados sin prima suficiente
+    salen en gris neutro, no en el color más claro: "no sé" y "casi cero" no
+    pueden verse igual.
+
+    La escala se recibe de fuera (vmin/vmax) para que varios mapas puestos
+    juntos compartan colores. Sin eso, el mismo tono significaría cosas
+    distintas en cada panel y la comparación engañaría.
+    """
+    if ax is None:
+        _, ax = plt.subplots(figsize=(4.2, 3.2), dpi=130)
+    fig = ax.figure
+    fig.patch.set_facecolor(SUPERFICIE)
+    ax.set_facecolor(SUPERFICIE)
+
+    valores = {}
+    if len(tabla):
+        for fila in tabla.itertuples():
+            valores[_sin_acentos(fila.DESC_ENTIDADFEDERATIVA)] = fila.siniestralidad_pct
+
+    norma = Normalize(vmin=vmin, vmax=vmax)
+    for clave, anillos in _geometrias().items():
+        v = valores.get(clave)
+        if v is None or pd.isna(v):
+            color = SIN_DATO
+        else:
+            # Se recorta al rango: un estado al 310% no debe estirar la escala
+            # y aplanar a los demás. El pie de la gráfica lo advierte.
+            color = RAMPA(norma(min(max(v, vmin), vmax)))
+        for anillo in anillos:
+            ax.add_patch(PoligonoMpl(anillo, closed=True, facecolor=color,
+                                     edgecolor=SUPERFICIE, linewidth=0.4, zorder=2))
+
+    ax.autoscale_view()
+    # Grados de latitud y longitud no miden lo mismo: a la latitud media de
+    # México un grado de longitud son ~0.92 de uno de latitud. Sin corregirlo
+    # el país sale estirado a lo ancho.
+    ax.set_aspect(1 / math.cos(math.radians(23)))
+    ax.set_axis_off()
+    if titulo:
+        ax.set_title(titulo, fontsize=9.5, color=TINTA, pad=6, loc="left")
+    return ax
+
+
+def rejilla_mapas(paneles, titulo="", vmax=100, ncols=3, fuga_aviso=15):
+    """
+    Varios mapas juntos, con una sola escala de color y una sola barra.
+
+    `paneles` es una lista de (etiqueta, tabla de siniestralidad_estatal).
+
+    Compartir la escala es el punto: con una por panel, el mismo tono
+    significaría cosas distintas en cada mapa y "cuál ramo está peor" sería
+    imposible de leer. Es la misma razón por la que la gráfica de
+    participación pasó a ser una sola.
+
+    `fuga_aviso` marca los ramos donde buena parte del monto de siniestros cae
+    en estados sin prima: ahí el mapa dibuja un reparto geográfico que no
+    existe, y el título lo dice en vez de dejarlo pasar.
+    """
+    nfilas = math.ceil(len(paneles) / ncols)
+    fig, ejes = plt.subplots(nfilas, ncols, figsize=(3.9 * ncols, 2.7 * nfilas), dpi=130)
+    # Los mapas no llevan ejes ni marcas, así que el espacio por defecto entre
+    # ellos sobra y deja la figura medio vacía.
+    # top deja sitio al título general; hspace, al aviso de dos líneas.
+    fig.subplots_adjust(left=.01, right=.99, top=.86, bottom=.06, wspace=.02, hspace=.26)
+    fig.patch.set_facecolor(SUPERFICIE)
+    ejes = ejes.ravel() if hasattr(ejes, "ravel") else [ejes]
+
+    for ax, (etiqueta, tabla) in zip(ejes, paneles):
+        fuga = tabla["fuga_pct"].iloc[0] if len(tabla) else float("nan")
+        sospechoso = pd.notna(fuga) and fuga >= fuga_aviso
+        nombre = CORTOS.get(etiqueta, etiqueta)
+        mapa_siniestralidad(tabla, nombre, ax=ax, vmin=0, vmax=vmax)
+        if sospechoso:
+            ax.set_title(f"{nombre}\n⚠ {fuga:.0f}% del monto en estados sin prima",
+                         fontsize=9, color=ESTADO["grave"], pad=6, loc="left")
+    for ax in ejes[len(paneles):]:
+        ax.set_axis_off()
+
+    if titulo:
+        fig.suptitle(titulo, fontsize=12.5, color=TINTA, x=0.01, ha="left", y=0.985)
+
+    barra = fig.colorbar(
+        plt.cm.ScalarMappable(norm=Normalize(0, vmax), cmap=RAMPA),
+        ax=ejes.tolist() if hasattr(ejes, "tolist") else list(ejes),
+        orientation="horizontal", fraction=0.045, pad=0.03, aspect=45)
+    barra.set_label(f"Siniestralidad (%) · el tono se satura en {vmax:.0f}%",
+                    fontsize=8.5, color=SECUNDARIA)
+    barra.outline.set_edgecolor(EJE)
+    barra.ax.tick_params(colors=MUTED, labelsize=8)
+    return fig

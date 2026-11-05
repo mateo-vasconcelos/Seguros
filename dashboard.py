@@ -15,10 +15,12 @@ import pandas as pd
 import streamlit as st
 
 from graficas import (alerta_ramos, carrera_contra_mercado, dispersion_cartera,
-                      mapa_frecuencia_severidad)
+                      mapa_frecuencia_severidad, rejilla_mapas)
+from graficas import CORTOS
 from metricas import (INSTITUCION, alerta_siniestralidad, comparar_vs_mercado, concentracion_cartera,
                       crecimiento_anual, diagnostico_frecuencia_severidad, filtrar,
-                      participacion_mercado, resumen, siniestralidad)
+                      participacion_mercado, ramos_extremos, resumen, siniestralidad,
+                      siniestralidad_estatal)
 from src.pipeline import RUTA_LIMPIA
 
 st.set_page_config(page_title="Benchmarking de seguros", layout="wide")
@@ -353,7 +355,7 @@ st.divider()
 
 # --------------------------------------------------------------------- pestañas
 tabs = st.tabs(["Resumen", "Participación", "Siniestralidad",
-                "Frecuencia y severidad", "Crecimiento"])
+                "Frecuencia y severidad", "Crecimiento", "Mapa"])
 
 # --- Resumen --------------------------------------------------------------
 # Orden fijo de las filas: así la tabla se lee igual para cualquier
@@ -496,3 +498,48 @@ with tabs[4]:
             st.markdown("**Crecimiento contra el año anterior (%)**")
             st.dataframe(juntar(creces, aseguradoras, "crecimiento_pct_inst"),
                          width="stretch")
+
+
+# --- Mapa ------------------------------------------------------------------
+with tabs[5]:
+    st.caption("Siniestralidad por estado en los tres ramos donde mejor y peor "
+               "le va a la aseguradora, con los mismos ramos que marca la "
+               "pestaña de Siniestralidad. Los seis mapas comparten la escala "
+               "de color para que un tono signifique lo mismo en todos.")
+
+    st.warning(
+        "**Este es el único corte que la base no soporta del todo.** La prima "
+        "se registra donde se emite la póliza y el siniestro donde ocurre, así "
+        "que en los ramos corporativos el numerador y el denominador caen en "
+        "estados distintos. Cuando eso pasa en serio, el mapa lo avisa sobre "
+        "el panel. Para primas y participación el corte por estado sí es "
+        "fiable; para siniestralidad, léelo con cuidado.")
+
+    for col, nombre in zip(paneles(aseguradoras, disposicion), aseguradoras):
+        with col:
+            mejores, peores = ramos_extremos(mercado, nombre)
+            if not mejores and not peores:
+                st.info(f"{nombre} no tiene ramos con volumen suficiente para evaluar.")
+                continue
+            tablas = [(r, siniestralidad_estatal(mercado, nombre, r))
+                      for r in mejores + peores]
+            fig = rejilla_mapas(tablas, f"{nombre} {anio}")
+            st.pyplot(fig, width="stretch")
+            plt.close(fig)
+
+            with st.expander(f"{nombre} — las cifras detrás del mapa"):
+                detalle = None
+                for ramo, t in tablas:
+                    if t.empty:
+                        continue
+                    trozo = (t[["DESC_ENTIDADFEDERATIVA", "siniestralidad_pct"]]
+                             .rename(columns={"siniestralidad_pct": CORTOS.get(ramo, ramo)}))
+                    detalle = (trozo if detalle is None else
+                               detalle.merge(trozo, on="DESC_ENTIDADFEDERATIVA", how="outer"))
+                if detalle is not None:
+                    st.dataframe(detalle.set_index("DESC_ENTIDADFEDERATIVA").round(1),
+                                 width="stretch")
+                st.caption("En blanco: el estado no llega a 5 mdp de prima en ese "
+                           "ramo y el cociente sería ruido. Medido sobre 2025, "
+                           "debajo de 1 mdp el percentil 90 de la siniestralidad "
+                           "estatal es 532%.")
