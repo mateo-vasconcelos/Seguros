@@ -25,7 +25,6 @@ from src.pipeline import RUTA_LIMPIA
 
 st.set_page_config(page_title="Benchmarking de seguros", layout="wide")
 
-SIN_COMPARAR = "— ninguna —"
 LADO_A_LADO = "Lado a lado"
 APILADAS = "Una sobre otra (más grandes)"
 
@@ -222,22 +221,39 @@ with st.sidebar:
     st.markdown("<div class='marca-linea'></div>", unsafe_allow_html=True)
     st.caption("Tendencias del Seguro · SIO – CNSF")
 
-    anio = st.selectbox("Año", anios,
+    anio = st.selectbox("Año", anios, key="anio",
                         index=anios.index(max(completos)) if completos else len(anios) - 1)
 
     nombres = sorted(filtrar(df, anio=anio)["NOMBRE_CORTO"].unique())
+
+    # Sin `key`, Streamlit considera que un selectbox cuyas opciones cambian es
+    # otro widget y lo reinicia: al cambiar de año se perdía la aseguradora
+    # elegida. Con `key` el valor vive en session_state y sobrevive, pero hay
+    # que podarlo a mano cuando deja de ser una opción válida —una aseguradora
+    # que no operó ese año— porque si no, Streamlit falla al no encontrarlo.
+    if st.session_state.get("aseguradora") not in nombres:
+        st.session_state.pop("aseguradora", None)
+
     # Sin valor por defecto: que la elección sea del usuario y no una que
     # arrastre sin darse cuenta.
-    principal = st.selectbox("Aseguradora", nombres, index=None,
+    principal = st.selectbox("Aseguradora", nombres, index=None, key="aseguradora",
                              placeholder="Elige una aseguradora")
-    contra = SIN_COMPARAR
+
+    contra = None
     disposicion = LADO_A_LADO
     if principal:
-        contra = st.selectbox("Comparar contra",
-                              [SIN_COMPARAR] + [n for n in nombres if n != principal])
-        if contra != SIN_COMPARAR:
+        otras = [n for n in nombres if n != principal]
+        # La comparación también se poda: si eliges como principal a la que
+        # tenías de comparación, dejaría de estar entre las opciones.
+        if st.session_state.get("contra") not in otras:
+            st.session_state.pop("contra", None)
+        # index=None hace que el control sea borrable: aparece la cruz y ya no
+        # hace falta una opción "— ninguna —" para dejar de comparar.
+        contra = st.selectbox("Comparar contra", otras, index=None, key="contra",
+                              placeholder="Ninguna")
+        if contra:
             disposicion = st.radio("Disposición", [LADO_A_LADO, APILADAS],
-                                   horizontal=False)
+                                   horizontal=False, key="disposicion")
 
     st.divider()
     st.markdown("<div class='nota-lateral'>El mercado siempre es el total del "
@@ -262,7 +278,7 @@ if principal is None:
     c.metric("Ramos", f"{mercado['DESC_RAMO'].nunique()}")
     st.stop()
 
-aseguradoras = [principal] + ([contra] if contra != SIN_COMPARAR else [])
+aseguradoras = [principal] + ([contra] if contra else [])
 
 # El último año de la base suele estar a medias y eso cambia cómo se leen
 # todas las cifras, así que se avisa antes de mostrar nada.

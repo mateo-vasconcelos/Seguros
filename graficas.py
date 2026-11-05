@@ -639,6 +639,12 @@ def mapa_frecuencia_severidad(diagnostico, titulo="", tolerancia=0.15, ax=None):
     fig.patch.set_facecolor(SUPERFICIE)
     ax.set_facecolor(SUPERFICIE)
 
+    # Sin ninguna razón positiva no hay nada que situar, y calcular los
+    # límites sobre una serie vacía da NaN. Pasa con aseguradoras que apenas
+    # operan: 29 combinaciones de año y aseguradora en esta base.
+    if datos.empty:
+        return _vacia(ax, "Sin ramos con frecuencia y severidad comparables")
+
     ax.set_xscale("log")
     ax.set_yscale("log")
     # Márgenes simétricos en el espacio logarítmico, para que el centro quede
@@ -686,7 +692,14 @@ def mapa_frecuencia_severidad(diagnostico, titulo="", tolerancia=0.15, ax=None):
     # El área es proporcional a la prima (s de matplotlib ya es área), que es
     # la relación que el ojo lee bien. Con alfa, porque en una aseguradora
     # diversificada un ramo grande tapa por completo a dos chicos.
-    tamanos = 40 + 230 * datos["prima_mdp_inst"] / datos["prima_mdp_inst"].max()
+    # Si toda la prima es cero —aseguradoras que apenas reportan—, la división
+    # da NaN, el tamaño del marcador queda indefinido y matplotlib falla al
+    # dibujar con un error que no apunta a nada ("need at least one array to
+    # concatenate"). Con tope cero, todas las burbujas van del mismo tamaño.
+    tope_prima = datos["prima_mdp_inst"].max()
+    tamanos = (40 + 230 * datos["prima_mdp_inst"] / tope_prima
+               if tope_prima and tope_prima > 0
+               else pd.Series(110.0, index=datos.index))
     ax.scatter(datos["razon_severidad"], datos["razon_frecuencia"],
                s=tamanos, color=colores, edgecolor=SUPERFICIE, linewidth=1.8,
                alpha=0.85, zorder=3)
