@@ -25,11 +25,12 @@ UMBRAL_ATENCION = 1.5   # rangos intercuartiles sobre la mediana del ramo
 UMBRAL_GRAVE = 3.0
 SINIESTRALIDAD_CRITICA = 100.0   # %; por encima, los siniestros exceden la prima
 
-# Corte de prima por ESTADO dentro de un ramo. Mucho más bajo que VOLUMEN_MIN
-# porque un ramo se reparte entre 32 entidades. Calibrado sobre 2025: debajo de
-# 1 mdp el percentil 90 de la siniestralidad estatal es 532% y el máximo supera
-# el millón; de 5 mdp en adelante baja a ~119% y se estabiliza.
-VOLUMEN_MIN_ESTADO = 5
+# Corte sobre el MERCADO de un estado dentro de un ramo, para la vista
+# geográfica. Calibrado sobre 2025: con mercados por debajo de 25 mdp aparecen
+# participaciones imposibles —arriba de 100%— porque alguna aseguradora tiene
+# prima negativa y encoge el denominador. A partir de 25 desaparecen las ocho
+# que había y se conserva el 92% de las celdas.
+MERCADO_MIN_ESTADO = 25
 
 # Banderas de alerta_siniestralidad que no representan un juicio.
 NO_EVALUADO_SINIESTRALIDAD = ("sin volumen", "no comparable")
@@ -763,51 +764,53 @@ def concentracion_cartera(df, por=("DESC_RAMO",), periodo="ANIO"):
         "prima_mdp", ascending=False, ignore_index=True)
 
 
-def siniestralidad_estatal(df, institucion, ramo, volumen_min=VOLUMEN_MIN_ESTADO):
+def participacion_estatal(df, institucion, ramo, mercado_min=MERCADO_MIN_ESTADO):
     """
-    Siniestralidad por entidad federativa de una institución en un ramo.
+    Participación de mercado de una institución en un ramo, estado por estado.
 
-    ESTE CORTE ES EL ÚNICO QUE LA BASE NO SOPORTA BIEN, y conviene saber por
-    qué antes de usarlo. La prima se registra donde se emite la póliza y el
-    siniestro donde ocurre, así que en los ramos corporativos el numerador y el
-    denominador caen en estados distintos: Mapfre emite toda su prima de Cascos
-    en CDMX y reporta el siniestro en Campeche, que tiene prima cero.
+    Este corte SÍ lo soporta la base, a diferencia de la siniestralidad por
+    entidad: aquí numerador y denominador son primas, y la prima siempre se
+    registra donde se emite la póliza. El problema de Campeche —prima en un
+    estado, siniestro en otro— no aplica porque los siniestros no entran.
 
-    Por eso se devuelve `fuga_pct`: qué parte del monto de siniestros del ramo
-    cae en estados sin prima. En los ramos masivos ronda el 0%; en Cascos
-    Embarcaciones llega al 88%, y ahí el mapa no significa nada.
-
-    `volumen_min` descarta los estados con poca prima, donde el cociente es
-    ruido: quedan con siniestralidad en NaN pero siguen en la tabla, para que
-    el mapa pueda pintarlos como "sin datos suficientes" en vez de omitirlos.
+    `mercado_min` descarta los estados donde el mercado del ramo es tan chico
+    que el cociente se vuelve inestable: ahí basta que una aseguradora reporte
+    prima negativa para que el denominador encoja y aparezcan participaciones
+    arriba de 100%. Esos estados quedan con participacion_pct en NaN pero
+    siguen en la tabla, para que el mapa los pinte como "sin datos" en vez de
+    omitirlos.
     """
-    sub = filtrar(df, institucion=institucion, ramo=ramo)
-    if sub.empty:
-        return pd.DataFrame(columns=["DESC_ENTIDADFEDERATIVA", "prima_mdp", "monto_mdp",
-                                     "siniestralidad_pct", "evaluado", "fuga_pct"])
+    tabla = participacion_mercado(df, por=("DESC_RAMO", "DESC_ENTIDADFEDERATIVA"),
+                                  periodo=None)
+    tabla = filtrar(tabla, institucion=institucion, ramo=ramo)
+    if tabla.empty:
+        return pd.DataFrame(columns=["DESC_ENTIDADFEDERATIVA", "prima_mdp",
+                                     "mercado_mdp", "participacion_pct", "evaluado"])
 
-    tabla = siniestralidad(sub, por=("DESC_ENTIDADFEDERATIVA",), periodo=None)
-
-    # La fuga se mide ANTES de filtrar por volumen: es una propiedad del ramo,
-    # no de los estados que queden.
-    monto = tabla["monto_mdp"].abs().sum()
-    sin_prima = tabla.loc[tabla["prima_mdp"] <= 0, "monto_mdp"].abs().sum()
-    tabla["fuga_pct"] = 100 * sin_prima / monto if monto else float("nan")
-
-    tabla["evaluado"] = tabla["prima_mdp"] >= volumen_min
-    tabla.loc[~tabla["evaluado"], "siniestralidad_pct"] = float("nan")
+    tabla["evaluado"] = tabla["mercado_mdp"] >= mercado_min
+    tabla.loc[~tabla["evaluado"], "participacion_pct"] = float("nan")
     return tabla.sort_values("prima_mdp", ascending=False, ignore_index=True)
 
 
 def ramos_extremos(df, institucion, n=3, volumen_min=VOLUMEN_MIN):
     """
-    Los `n` ramos donde mejor y peor le va a una institución, por siniestralidad.
+    Los `n` ramos donde una institución más y menos pesa, por participación.
 
-    Usa el mismo orden que alerta_siniestralidad —distancia a la mediana del
-    ramo en rangos intercuartiles— para que el mapa y el resumen hablen de los
-    mismos ramos. Devuelve (mejores, peores), listas de nombres.
+    Es el mismo orden que usa el resumen en su bloque de participación, para
+    que el mapa y la tabla hablen de los mismos ramos. Devuelve
+    (mayores, menores): listas de nombres, la primera de más a menos.
+
+    Se descartan los ramos por debajo de `volumen_min` de prima: con carteras
+    diminutas la participación es real pero no dice nada del negocio.
     """
-    al = alerta_siniestralidad(df, institucion, volumen_min=volumen_min)
-    ev = al[~al["bandera"].isin(NO_EVALUADO_SINIESTRALIDAD)].dropna(subset=["iqrs"])
-    return (ev.nsmallest(n, "iqrs")["DESC_RAMO"].tolist(),
-            ev.nlargest(n, "iqrs")["DESC_RAMO"].tolist())
+    part = filtrar(participacion_mercado(df), institucion=institucion)
+    part = part[part["prima_mdp"] >= volumen_min]
+    if part.empty:
+        return [], []
+    # Nunca el mismo ramo en los dos extremos: con pocos ramos, la cabeza y la
+    # cola del orden serían el mismo, como pasaba en el resumen.
+    corte = min(n, len(part) // 2) or (1 if len(part) == 1 else 0)
+    if len(part) == 1:
+        return part["DESC_RAMO"].tolist(), []
+    return (part.nlargest(corte, "participacion_pct")["DESC_RAMO"].tolist(),
+            part.nsmallest(corte, "participacion_pct")["DESC_RAMO"].tolist())

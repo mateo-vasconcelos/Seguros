@@ -19,8 +19,8 @@ from graficas import (alerta_ramos, carrera_contra_mercado, dispersion_cartera,
 from graficas import CORTOS
 from metricas import (INSTITUCION, alerta_siniestralidad, comparar_vs_mercado, concentracion_cartera,
                       crecimiento_anual, diagnostico_frecuencia_severidad, filtrar,
-                      participacion_mercado, ramos_extremos, resumen, siniestralidad,
-                      siniestralidad_estatal)
+                      participacion_estatal, participacion_mercado, ramos_extremos,
+                      resumen, siniestralidad)
 from src.pipeline import RUTA_LIMPIA
 
 st.set_page_config(page_title="Benchmarking de seguros", layout="wide")
@@ -77,13 +77,18 @@ ESTILO = """
 table.resumen { width: 100%; border-collapse: collapse; }
 table.resumen th.aseg { text-align: left; padding: .5rem .8rem; font-weight: 600;
     font-size: .95rem; color: #221638; border-bottom: 2px solid #e4ecf1; }
-table.resumen th.tema { text-align: left; width: 14rem; vertical-align: top;
-    padding: .7rem .8rem; font-weight: 600; font-size: .82rem; letter-spacing: .03em;
-    border-left: 3px solid #6b6b84; }
-table.resumen th.tema .signo { display: block; font-weight: 400; font-size: .76rem;
-    letter-spacing: 0; margin-top: .1rem; }
+/* La categoría ocupa una sola celda que abarca sus filas: así se ve que
+   "donde más pesa" y "donde menos pesa" son la MISMA medida en dos sentidos,
+   y no dos categorías distintas. */
+table.resumen th.grupo { text-align: left; width: 9.5rem; vertical-align: top;
+    padding: .8rem .8rem; font-weight: 600; font-size: .86rem; letter-spacing: .02em;
+    color: #221638; background: #f7fafc; border-top: 2px solid #b9cbd8; }
+table.resumen th.sub { text-align: left; width: 11rem; vertical-align: top;
+    padding: .7rem .8rem; font-weight: 500; font-size: .82rem; color: #4a4a4a;
+    border-left: 3px solid #6b6b84; border-bottom: 1px solid #cfdce6; }
 table.resumen td { vertical-align: top; padding: .7rem .8rem; font-size: .93rem;
     line-height: 1.5; border-bottom: 1px solid #cfdce6; }
+table.resumen tr.inicio-grupo td { border-top: 2px solid #b9cbd8; }
 table.resumen tr:hover td { background: #f8fbfd; }
 table.resumen .vacio { color: #a9a9b8; }
 
@@ -363,10 +368,23 @@ tabs = st.tabs(["Resumen", "Participación", "Siniestralidad",
 ORDEN_TEMAS = ["cartera", "participación", "crecimiento", "siniestralidad", "diagnóstico"]
 ORDEN_SIGNOS = ["informativo", "favorable", "desfavorable"]
 COLOR_SIGNO = {"favorable": "#0ca30c", "desfavorable": "#d03b3b", "informativo": "#6b6b84"}
-TEXTO_SIGNO = {"favorable": "favorable", "desfavorable": "a revisar", "informativo": ""}
+
+# Cada medida se describe en sus propios términos. Un "a revisar" genérico
+# sería falso en participación: ahí el lado desfavorable es dónde MENOS pesa
+# dentro de su propia cartera, no que esté peor que el mercado.
+ETIQUETA_FILA = {
+    ("cartera", "informativo"): "las más grandes",
+    ("participación", "favorable"): "donde más pesa",
+    ("participación", "desfavorable"): "donde menos pesa",
+    ("crecimiento", "favorable"): "gana terreno al mercado",
+    ("crecimiento", "desfavorable"): "pierde terreno",
+    ("siniestralidad", "favorable"): "mejor que el mercado",
+    ("siniestralidad", "desfavorable"): "peor que el mercado",
+    ("diagnóstico", "desfavorable"): "sobrecosto no cobrado",
+}
 
 with tabs[0]:
-    st.caption("Top 3 de cada métrica, en los dos sentidos. Una celda vacía "
+    st.caption("Top 3 de cada medida, en los dos sentidos. Una celda vacía "
                "significa que esa aseguradora no tiene nada que destacar ahí.")
 
     titulares = {}
@@ -381,18 +399,24 @@ with tabs[0]:
     presentes = {(f.tema, f.signo) for t in titulares.values() for f in t.itertuples()}
     filas = [(tema, signo) for tema in ORDEN_TEMAS for signo in ORDEN_SIGNOS
              if (tema, signo) in presentes]
+    # Cuántas filas ocupa cada categoría, para que su celda las abarque todas.
+    alto = {tema: sum(1 for t, _ in filas if t == tema) for tema, _ in filas}
 
-    html = ["<table class='resumen'><thead><tr><th class='aseg'></th>"]
+    html = ["<table class='resumen'><thead><tr>",
+            "<th class='aseg'></th><th class='aseg'></th>"]
     html += [f"<th class='aseg'>{n}</th>" for n in aseguradoras]
     html.append("</tr></thead><tbody>")
+
+    tema_previo = None
     for tema, signo in filas:
+        inicio = tema != tema_previo
+        html.append(f"<tr class='{'inicio-grupo' if inicio else ''}'>")
+        if inicio:
+            html.append(f"<th class='grupo' rowspan='{alto[tema]}'>{tema.upper()}</th>")
+            tema_previo = tema
         color = COLOR_SIGNO.get(signo, "#6b6b84")
-        etiqueta = TEXTO_SIGNO.get(signo, "")
-        html.append(f"<tr><th class='tema' style='border-left-color:{color}'>"
-                    f"{tema.upper()}"
-                    + (f"<span class='signo' style='color:{color}'>{etiqueta}</span>"
-                       if etiqueta else "")
-                    + "</th>")
+        etiqueta = ETIQUETA_FILA.get((tema, signo), signo)
+        html.append(f"<th class='sub' style='border-left-color:{color}'>{etiqueta}</th>")
         for nombre in aseguradoras:
             t = titulares[nombre]
             lineas = t[(t.tema == tema) & (t.signo == signo)]["detalle"].tolist()
@@ -502,44 +526,57 @@ with tabs[4]:
 
 # --- Mapa ------------------------------------------------------------------
 with tabs[5]:
-    st.caption("Siniestralidad por estado en los tres ramos donde mejor y peor "
-               "le va a la aseguradora, con los mismos ramos que marca la "
-               "pestaña de Siniestralidad. Los seis mapas comparten la escala "
-               "de color para que un tono signifique lo mismo en todos.")
+    st.caption("Participación de mercado estado por estado, en los tres ramos "
+               "donde la aseguradora más pesa y los tres donde menos. Los seis "
+               "mapas de una aseguradora comparten su escala de color; al "
+               "comparar dos, **cada bloque tiene la suya** —lo dice su barra— "
+               "porque con una sola el más chico quedaría en un tono plano.")
+    st.caption("Se usa participación y no siniestralidad porque este corte sí "
+               "lo soporta la base: numerador y denominador son primas, y la "
+               "prima siempre se registra donde se emite la póliza. La "
+               "siniestralidad por estado está rota —el siniestro se registra "
+               "donde ocurre, no donde se vendió— y dibujaría un reparto "
+               "geográfico que no existe.")
 
-    st.warning(
-        "**Este es el único corte que la base no soporta del todo.** La prima "
-        "se registra donde se emite la póliza y el siniestro donde ocurre, así "
-        "que en los ramos corporativos el numerador y el denominador caen en "
-        "estados distintos. Cuando eso pasa en serio, el mapa lo avisa sobre "
-        "el panel. Para primas y participación el corte por estado sí es "
-        "fiable; para siniestralidad, léelo con cuidado.")
+    # La escala se comparte DENTRO del bloque de cada aseguradora, no entre
+    # bloques. Entre sus seis ramos la comparación es el punto y la escala
+    # tiene que ser una; entre dos aseguradoras no lo es —para eso están los
+    # KPIs de arriba— y forzarla deja al más chico en un tono plano: con el
+    # máximo de AXA en 18% y el de Sura en 3%, los mapas de Sura no dirían
+    # nada. Cada barra de color indica su propio tope.
+    bloques = []
+    for nombre in aseguradoras:
+        mayores, menores = ramos_extremos(mercado, nombre)
+        paneles_n = ([(r, "donde más pesa", participacion_estatal(mercado, nombre, r))
+                      for r in mayores]
+                     + [(r, "donde menos pesa", participacion_estatal(mercado, nombre, r))
+                        for r in menores])
+        bloques.append((nombre, paneles_n))
 
-    for col, nombre in zip(paneles(aseguradoras, disposicion), aseguradoras):
+    for col, (nombre, paneles_n) in zip(paneles(aseguradoras, disposicion), bloques):
         with col:
-            mejores, peores = ramos_extremos(mercado, nombre)
-            if not mejores and not peores:
-                st.info(f"{nombre} no tiene ramos con volumen suficiente para evaluar.")
+            if not paneles_n:
+                st.info(f"{nombre} no tiene ramos con prima suficiente para el mapa.")
                 continue
-            tablas = [(r, siniestralidad_estatal(mercado, nombre, r))
-                      for r in mejores + peores]
-            fig = rejilla_mapas(tablas, f"{nombre} {anio}")
+            fig = rejilla_mapas(paneles_n, f"{nombre} {anio}")
             st.pyplot(fig, width="stretch")
             plt.close(fig)
 
             with st.expander(f"{nombre} — las cifras detrás del mapa"):
                 detalle = None
-                for ramo, t in tablas:
+                for ramo, sub, t in paneles_n:
                     if t.empty:
                         continue
-                    trozo = (t[["DESC_ENTIDADFEDERATIVA", "siniestralidad_pct"]]
-                             .rename(columns={"siniestralidad_pct": CORTOS.get(ramo, ramo)}))
+                    etiqueta = f"{CORTOS.get(ramo, ramo)} ({'+' if 'más' in sub else '−'})"
+                    trozo = (t[["DESC_ENTIDADFEDERATIVA", "participacion_pct"]]
+                             .rename(columns={"participacion_pct": etiqueta}))
                     detalle = (trozo if detalle is None else
                                detalle.merge(trozo, on="DESC_ENTIDADFEDERATIVA", how="outer"))
                 if detalle is not None:
-                    st.dataframe(detalle.set_index("DESC_ENTIDADFEDERATIVA").round(1),
+                    st.dataframe(detalle.set_index("DESC_ENTIDADFEDERATIVA").round(2),
                                  width="stretch")
-                st.caption("En blanco: el estado no llega a 5 mdp de prima en ese "
-                           "ramo y el cociente sería ruido. Medido sobre 2025, "
-                           "debajo de 1 mdp el percentil 90 de la siniestralidad "
-                           "estatal es 532%.")
+                st.caption("En blanco: el mercado del ramo en ese estado no llega "
+                           "a 25 mdp. Por debajo de ese tamaño basta que una "
+                           "aseguradora reporte prima negativa para que el "
+                           "denominador encoja y salgan participaciones "
+                           "imposibles, arriba de 100%.")

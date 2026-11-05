@@ -909,20 +909,30 @@ def _geometrias():
     return contornos
 
 
-def mapa_siniestralidad(tabla, titulo="", ax=None, vmin=0, vmax=100):
+def _techo_bonito(valor):
+    """Redondea hacia arriba a 1, 2 o 5 por década: topes de escala legibles."""
+    if not valor or valor <= 0 or math.isnan(valor):
+        return 1.0
+    exp = math.floor(math.log10(valor))
+    for mult in (1, 2, 5, 10):
+        techo = mult * 10 ** exp
+        if techo >= valor:
+            return float(techo)
+    return float(10 ** (exp + 1))
+
+
+def mapa_estatal(tabla, columna, titulo="", subtitulo="", ax=None, vmin=0, vmax=100):
     """
-    Mapa de México con la siniestralidad de un ramo, estado por estado.
+    Mapa de México con un indicador estado por estado.
 
-    `tabla` es la salida de metricas.siniestralidad_estatal().
+    `tabla` necesita DESC_ENTIDADFEDERATIVA y la columna que se pinta.
 
-    El tono va de claro a oscuro con la siniestralidad: es una magnitud, y un
-    solo tono es lo que se lee sin leyenda. Los estados sin prima suficiente
-    salen en gris neutro, no en el color más claro: "no sé" y "casi cero" no
-    pueden verse igual.
+    El tono va de claro a oscuro con el valor: es una magnitud, y un solo tono
+    es lo que se lee sin leyenda. Los estados sin dato salen en gris neutro, no
+    en el color más claro: "no sé" y "casi cero" no pueden verse igual.
 
-    La escala se recibe de fuera (vmin/vmax) para que varios mapas puestos
-    juntos compartan colores. Sin eso, el mismo tono significaría cosas
-    distintas en cada panel y la comparación engañaría.
+    La escala se recibe de fuera para que varios mapas juntos compartan
+    colores. Sin eso, el mismo tono significaría cosas distintas en cada panel.
     """
     if ax is None:
         _, ax = plt.subplots(figsize=(4.2, 3.2), dpi=130)
@@ -933,17 +943,13 @@ def mapa_siniestralidad(tabla, titulo="", ax=None, vmin=0, vmax=100):
     valores = {}
     if len(tabla):
         for fila in tabla.itertuples():
-            valores[_sin_acentos(fila.DESC_ENTIDADFEDERATIVA)] = fila.siniestralidad_pct
+            valores[_sin_acentos(fila.DESC_ENTIDADFEDERATIVA)] = getattr(fila, columna)
 
     norma = Normalize(vmin=vmin, vmax=vmax)
     for clave, anillos in _geometrias().items():
         v = valores.get(clave)
-        if v is None or pd.isna(v):
-            color = SIN_DATO
-        else:
-            # Se recorta al rango: un estado al 310% no debe estirar la escala
-            # y aplanar a los demás. El pie de la gráfica lo advierte.
-            color = RAMPA(norma(min(max(v, vmin), vmax)))
+        color = (SIN_DATO if v is None or pd.isna(v)
+                 else RAMPA(norma(min(max(v, vmin), vmax))))
         for anillo in anillos:
             ax.add_patch(PoligonoMpl(anillo, closed=True, facecolor=color,
                                      edgecolor=SUPERFICIE, linewidth=0.4, zorder=2))
@@ -955,42 +961,56 @@ def mapa_siniestralidad(tabla, titulo="", ax=None, vmin=0, vmax=100):
     ax.set_aspect(1 / math.cos(math.radians(23)))
     ax.set_axis_off()
     if titulo:
-        ax.set_title(titulo, fontsize=9.5, color=TINTA, pad=6, loc="left")
+        ax.set_title(titulo, fontsize=9.5, color=TINTA, pad=14 if subtitulo else 6,
+                     loc="left")
+    if subtitulo:
+        ax.annotate(subtitulo, (0, 1), xycoords="axes fraction", xytext=(0, 3),
+                    textcoords="offset points", fontsize=8, color=MUTED)
     return ax
 
 
-def rejilla_mapas(paneles, titulo="", vmax=100, ncols=3, fuga_aviso=15):
+def rejilla_mapas(paneles, titulo="", columna="participacion_pct",
+                  etiqueta_escala="Participación de mercado (%)",
+                  vmax=None, ncols=3):
     """
     Varios mapas juntos, con una sola escala de color y una sola barra.
 
-    `paneles` es una lista de (etiqueta, tabla de siniestralidad_estatal).
+    `paneles` es una lista de (nombre del ramo, subtítulo, tabla).
 
     Compartir la escala es el punto: con una por panel, el mismo tono
-    significaría cosas distintas en cada mapa y "cuál ramo está peor" sería
-    imposible de leer. Es la misma razón por la que la gráfica de
-    participación pasó a ser una sola.
+    significaría cosas distintas en cada mapa y "dónde pesa más" sería
+    imposible de leer entre paneles. Es la misma razón por la que la gráfica
+    de participación pasó a ser una sola.
 
-    `fuga_aviso` marca los ramos donde buena parte del monto de siniestros cae
-    en estados sin prima: ahí el mapa dibuja un reparto geográfico que no
-    existe, y el título lo dice en vez de dejarlo pasar.
+    `vmax=None` lo calcula del dato y lo redondea hacia arriba. Un tope fijo
+    no sirve aquí: una aseguradora puede moverse entre 0.3% y 3% y otra llegar
+    a 47%, y con la misma escala la primera saldría toda del color más claro.
     """
+    # El tope sale del percentil 97, no del máximo: un solo estado extremo
+    # fijaba la escala de los seis y dejaba cinco en un tono plano. Sura tiene
+    # el 47% del mercado de Incendio en Guerrero —dato real— y con eso el
+    # techo subía a 50 cuando sus otros cinco ramos no pasan de 10. Donde los
+    # valores están repartidos, el percentil y el máximo coinciden y no cambia
+    # nada: AXA y Quálitas conservan su escala.
+    valores = pd.concat([t[columna].dropna() for _, _, t in paneles if len(t)]) \
+        if paneles else pd.Series(dtype=float)
+    saturados = 0
+    if vmax is None:
+        vmax = _techo_bonito(valores.quantile(0.97)) if len(valores) else 1.0
+    if len(valores):
+        saturados = int((valores > vmax).sum())
+
     nfilas = math.ceil(len(paneles) / ncols)
     fig, ejes = plt.subplots(nfilas, ncols, figsize=(3.9 * ncols, 2.7 * nfilas), dpi=130)
-    # Los mapas no llevan ejes ni marcas, así que el espacio por defecto entre
-    # ellos sobra y deja la figura medio vacía.
-    # top deja sitio al título general; hspace, al aviso de dos líneas.
-    fig.subplots_adjust(left=.01, right=.99, top=.86, bottom=.06, wspace=.02, hspace=.26)
     fig.patch.set_facecolor(SUPERFICIE)
+    # Los mapas no llevan ejes ni marcas, así que el espacio por defecto entre
+    # ellos sobra; top deja sitio al título general y hspace, al subtítulo.
+    fig.subplots_adjust(left=.01, right=.99, top=.86, bottom=.06, wspace=.02, hspace=.26)
     ejes = ejes.ravel() if hasattr(ejes, "ravel") else [ejes]
 
-    for ax, (etiqueta, tabla) in zip(ejes, paneles):
-        fuga = tabla["fuga_pct"].iloc[0] if len(tabla) else float("nan")
-        sospechoso = pd.notna(fuga) and fuga >= fuga_aviso
-        nombre = CORTOS.get(etiqueta, etiqueta)
-        mapa_siniestralidad(tabla, nombre, ax=ax, vmin=0, vmax=vmax)
-        if sospechoso:
-            ax.set_title(f"{nombre}\n⚠ {fuga:.0f}% del monto en estados sin prima",
-                         fontsize=9, color=ESTADO["grave"], pad=6, loc="left")
+    for ax, (ramo, subtitulo, tabla) in zip(ejes, paneles):
+        mapa_estatal(tabla, columna, CORTOS.get(ramo, ramo), subtitulo,
+                     ax=ax, vmin=0, vmax=vmax)
     for ax in ejes[len(paneles):]:
         ax.set_axis_off()
 
@@ -1001,8 +1021,10 @@ def rejilla_mapas(paneles, titulo="", vmax=100, ncols=3, fuga_aviso=15):
         plt.cm.ScalarMappable(norm=Normalize(0, vmax), cmap=RAMPA),
         ax=ejes.tolist() if hasattr(ejes, "tolist") else list(ejes),
         orientation="horizontal", fraction=0.045, pad=0.03, aspect=45)
-    barra.set_label(f"Siniestralidad (%) · el tono se satura en {vmax:.0f}%",
-                    fontsize=8.5, color=SECUNDARIA)
+    nota = etiqueta_escala
+    if saturados:
+        nota += f"  ·  {saturados} estado(s) por encima de {vmax:g}% se pintan al tope"
+    barra.set_label(nota, fontsize=8.5, color=SECUNDARIA)
     barra.outline.set_edgecolor(EJE)
     barra.ax.tick_params(colors=MUTED, labelsize=8)
     return fig
