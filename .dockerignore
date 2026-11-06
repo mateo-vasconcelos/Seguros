@@ -1,0 +1,13 @@
+.git
+.gitignore
+.venv
+**/__pycache__
+**/.ipynb_checkpoints
+.DS_Store
+data/raw
+docs
+notebooks
+claudedocs
+requirements-dev.txt
+Dockerfile
+.dockerignore

@@ -34,3 +34,15 @@ Autor: **Mateo Vasconcelos**
 - **No estaré analizando información de 2021 ya que los meses empiezan en abril y no hay información del mes anterior, por lo que no podemos saber los números reales de ese mes**
 ## Glosario: 
 El vocabulario fue sacado de: Vocabulario aseguradora .docx
+## Despliegue en Dokploy
+El repo incluye un `Dockerfile` que solo instala `requirements.txt` y copia lo que usa la app (código, `data/processed/` y `data/geo/`).
+1. En Dokploy: **Create Application** → proveedor GitHub/Git apuntando a este repo, rama `main`.
+2. **Build Type:** `Dockerfile` (ruta `Dockerfile`, contexto `.`).
+3. **Domains:** agrega tu dominio con **Container Port `8501`** y activa HTTPS (Let's Encrypt).
+4. **Deploy.** La imagen trae `HEALTHCHECK` contra `/_stcore/health`.
+
+Para actualizar los datos: regenera `data/processed/sio_mensual.parquet` con el pipeline, haz commit y vuelve a desplegar.
+
+Prueba local de la imagen:
+- `docker build -t benchmark-seguros .`
+- `docker run --rm -p 8501:8501 benchmark-seguros`
